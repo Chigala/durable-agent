@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@durable-agent/core": ["packages/core/src"],
+      "@durable-agent/agent": ["packages/agent/src"],
+      "@durable-agent/adapter-openworkflow": ["packages/adapter-openworkflow/src"],
+      "@durable-agent/adapter-ai-sdk": ["packages/adapter-ai-sdk/src"]
+    }
+  },
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/agent" },
+    { "path": "packages/adapter-openworkflow" },
+    { "path": "packages/adapter-ai-sdk" },
+    { "path": "apps/playground" }
+  ],
+  "files": []
+}
