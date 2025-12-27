@@ -1,6 +1,6 @@
 {
   "name": "@durable-agent/agent",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Durable AI agent implementation",
   "license": "MIT",
   "type": "module",
