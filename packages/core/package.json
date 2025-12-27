@@ -12,7 +12,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc --build",
     "dev": "tsc --build --watch",
@@ -22,6 +24,8 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "ai": "^6.0.3",
+    "openworkflow": "^0.4.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

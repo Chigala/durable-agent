@@ -1,25 +1,29 @@
 import type { z } from "zod";
 import type { Message, MessageHistory, ToolCall } from "./message.js";
-import type { DurableStepContext, ToolCallRecord, ToolRegistry } from "./tool.js";
+import type {
+  DurableStepContext,
+  ToolCallRecord,
+  ToolRegistry,
+} from "./tool.js";
+import type { Backend } from "openworkflow";
+import type { LanguageModel } from "ai";
+
+/**
+ * Configuration for DurableAgent
+ */
+export interface DurableAgentConfig {
+  /** OpenWorkflow backend (SQLite or Postgres) */
+  readonly backend: Backend;
+  /** AI SDK language model */
+  readonly model: LanguageModel;
+  /** Worker concurrency (default: 1) */
+  readonly concurrency?: number;
+}
 
 /**
  * Strategy for agent execution
  */
 export type AgentStrategy = "simple" | "react";
-
-/**
- * Configuration for agent memory
- */
-export interface MemoryConfig {
-  /** Type of memory to use */
-  readonly type: "conversation" | "buffer";
-  /** Maximum number of messages to retain */
-  readonly maxMessages?: number;
-  /** Summarize messages after this count */
-  readonly summarizeAfter?: number;
-  /** Function to create partition key for multi-tenant memory */
-  readonly partitionKey?: (input: AgentInput) => string;
-}
 
 /**
  * Input provided when running an agent
@@ -29,8 +33,6 @@ export interface AgentInput {
   readonly task: string;
   /** Optional context data */
   readonly context?: Record<string, unknown>;
-  /** Optional user identifier for memory partitioning */
-  readonly userId?: string;
 }
 
 /**
@@ -142,8 +144,6 @@ export interface AgentConfig<TTools extends ToolRegistry = ToolRegistry> {
   readonly maxIterations?: number;
   /** Maximum tokens per model response */
   readonly maxTokens?: number;
-  /** Memory configuration */
-  readonly memory?: MemoryConfig;
   /** Lifecycle hooks */
   readonly hooks?: AgentHooks<TTools>;
   /** Input validation schema */
@@ -172,4 +172,126 @@ export interface RunnableAgent<TTools extends ToolRegistry = ToolRegistry> {
   readonly config: AgentConfig<TTools>;
   /** Run the agent with given input */
   run(input: AgentInput): Promise<AgentHandle>;
+}
+
+/**
+ * Handle for a defined agent
+ */
+export interface DefinedAgent {
+  /** Agent configuration */
+  readonly config: { readonly name: string };
+  /** Run the agent with given input */
+  run(input: AgentInput): Promise<AgentRunHandle>;
+}
+
+/**
+ * Handle for a running agent
+ */
+export interface AgentRunHandle {
+  /** Unique identifier for this run */
+  readonly id: string;
+  /** Wait for and return the result */
+  result(): Promise<AgentResult>;
+  /** Cancel the running agent */
+  cancel(): Promise<void>;
+}
+
+/**
+ * Configuration for sequential agent composition
+ */
+export interface SequentialAgentConfig {
+  /** Unique name for the sequential pipeline */
+  readonly name: string;
+  /** Agents to run in sequence (accepts agents with any tool configuration) */
+  readonly agents: readonly DefinedAgent[];
+  /** Optional hooks for pipeline lifecycle */
+  readonly hooks?: SequentialAgentHooks;
+}
+
+/**
+ * Hooks for sequential agent lifecycle
+ */
+export interface SequentialAgentHooks {
+  /** Called before each agent runs */
+  beforeAgent?: (agentName: string, input: AgentInput) => Promise<void>;
+  /** Called after each agent completes */
+  afterAgent?: (agentName: string, result: AgentResult) => Promise<void>;
+}
+
+/**
+ * Configuration for parallel agent composition
+ */
+export interface ParallelAgentConfig<
+  TAgents extends Record<string, DefinedAgent>,
+  TOutput = { [K in keyof TAgents]: string },
+> {
+  /** Unique name for the parallel execution */
+  readonly name: string;
+  /** Agents to run in parallel, keyed by name for type-safe access */
+  readonly agents: TAgents;
+  /** Optional hooks for parallel execution lifecycle */
+  readonly hooks?: ParallelAgentHooks;
+  /** Optional aggregator to combine results into custom output */
+  readonly aggregate?: (results: {
+    [K in keyof TAgents]: AgentResult;
+  }) => TOutput;
+}
+
+/**
+ * Hooks for parallel agent lifecycle
+ */
+export interface ParallelAgentHooks {
+  /** Called before each agent runs */
+  beforeAgent?: (agentName: string, input: AgentInput) => Promise<void>;
+  /** Called after each agent completes */
+  afterAgent?: (agentName: string, result: AgentResult) => Promise<void>;
+}
+
+/**
+ * Result from a parallel agent execution
+ */
+export interface ParallelResult<
+  TAgents extends Record<string, DefinedAgent>,
+  TOutput = { [K in keyof TAgents]: string },
+> {
+  /** Aggregated or default output */
+  readonly output: TOutput;
+  /** Full results from each agent, keyed by agent name */
+  readonly results: { [K in keyof TAgents]: AgentResult };
+  /** Overall status */
+  readonly status: "completed" | "partial" | "failed";
+  /** Total iterations across all agents */
+  readonly iterations: number;
+  /** All tool calls from all agents */
+  readonly toolCalls: readonly ToolCallRecord[];
+  /** All messages from all agents */
+  readonly messages: readonly Message[];
+}
+
+/**
+ * Handle for a parallel agent
+ */
+export interface ParallelAgent<
+  TAgents extends Record<string, DefinedAgent>,
+  TOutput = { [K in keyof TAgents]: string },
+> {
+  /** Pipeline name */
+  readonly name: string;
+  /** Run the parallel agent with given input */
+  run(input: AgentInput): Promise<ParallelAgentRunHandle<TAgents, TOutput>>;
+}
+
+/**
+ * Handle for a running parallel agent
+ */
+export interface ParallelAgentRunHandle<
+  TAgents extends Record<string, DefinedAgent>,
+  TOutput = { [K in keyof TAgents]: string },
+> {
+  /** Unique identifier for this run */
+  readonly id: string;
+  /** Wait for and return the result */
+  result(): Promise<ParallelResult<TAgents, TOutput>>;
+  /** Cancel the running agent */
+  cancel(): Promise<void>;
 }

@@ -22,7 +22,6 @@ export type {
 
 export type {
   AgentStrategy,
-  MemoryConfig,
   AgentInput,
   AgentContext,
   ModelResponse,
@@ -32,11 +31,19 @@ export type {
   AgentConfig,
   AgentHandle,
   RunnableAgent,
+  DurableAgentConfig,
+  DefinedAgent,
+  AgentRunHandle,
+  SequentialAgentConfig,
+  SequentialAgentHooks,
+  ParallelAgentConfig,
+  ParallelAgentHooks,
+  ParallelResult,
+  ParallelAgent,
+  ParallelAgentRunHandle,
 } from "./agent.js";
 
-export type {
-  DurableBackend,
-} from "./backend.js";
+export type { DurableBackend } from "./backend.js";
 
 export type {
   GenerateOptions,
