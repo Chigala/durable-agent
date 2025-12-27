@@ -10,6 +10,7 @@ import type {
   ToolRegistry,
   Message,
   AgentHooks,
+  ToolCallRecord,
 } from "@durable-agent/core";
 import { StepManager } from "./step-manager.js";
 import { ToolExecutor } from "./tool-executor.js";
@@ -70,6 +71,82 @@ export interface SequentialAgentHooks {
   beforeAgent?: (agentName: string, input: AgentInput) => Promise<void>;
   /** Called after each agent completes */
   afterAgent?: (agentName: string, result: AgentResult) => Promise<void>;
+}
+
+/**
+ * Configuration for parallel agent composition
+ */
+export interface ParallelAgentConfig<
+  TAgents extends Record<string, DefinedAgent<any>>,
+  TOutput = { [K in keyof TAgents]: string }
+> {
+  /** Unique name for the parallel execution */
+  readonly name: string;
+  /** Agents to run in parallel, keyed by name for type-safe access */
+  readonly agents: TAgents;
+  /** Optional hooks for parallel execution lifecycle */
+  readonly hooks?: ParallelAgentHooks;
+  /** Optional aggregator to combine results into custom output */
+  readonly aggregate?: (results: { [K in keyof TAgents]: AgentResult }) => TOutput;
+}
+
+/**
+ * Hooks for parallel agent lifecycle
+ */
+export interface ParallelAgentHooks {
+  /** Called before each agent runs */
+  beforeAgent?: (agentName: string, input: AgentInput) => Promise<void>;
+  /** Called after each agent completes */
+  afterAgent?: (agentName: string, result: AgentResult) => Promise<void>;
+}
+
+/**
+ * Result from a parallel agent execution
+ */
+export interface ParallelResult<
+  TAgents extends Record<string, DefinedAgent<any>>,
+  TOutput = { [K in keyof TAgents]: string }
+> {
+  /** Aggregated or default output */
+  readonly output: TOutput;
+  /** Full results from each agent, keyed by agent name */
+  readonly results: { [K in keyof TAgents]: AgentResult };
+  /** Overall status */
+  readonly status: "completed" | "partial" | "failed";
+  /** Total iterations across all agents */
+  readonly iterations: number;
+  /** All tool calls from all agents */
+  readonly toolCalls: readonly ToolCallRecord[];
+  /** All messages from all agents */
+  readonly messages: readonly Message[];
+}
+
+/**
+ * Handle for a parallel agent
+ */
+export interface ParallelAgent<
+  TAgents extends Record<string, DefinedAgent<any>>,
+  TOutput = { [K in keyof TAgents]: string }
+> {
+  /** Pipeline name */
+  readonly name: string;
+  /** Run the parallel agent with given input */
+  run(input: AgentInput): Promise<ParallelAgentRunHandle<TAgents, TOutput>>;
+}
+
+/**
+ * Handle for a running parallel agent
+ */
+export interface ParallelAgentRunHandle<
+  TAgents extends Record<string, DefinedAgent<any>>,
+  TOutput = { [K in keyof TAgents]: string }
+> {
+  /** Unique identifier for this run */
+  readonly id: string;
+  /** Wait for and return the result */
+  result(): Promise<ParallelResult<TAgents, TOutput>>;
+  /** Cancel the running agent */
+  cancel(): Promise<void>;
 }
 
 /**
@@ -224,6 +301,145 @@ export class DurableAgent {
           cancel: () => handle.cancel(),
         };
       },
+    };
+  }
+
+  /**
+   * Create a parallel agent that runs multiple agents concurrently
+   *
+   * All agents run as durable steps in parallel. If the workflow crashes,
+   * completed agents are not re-run on resume.
+   *
+   * @example
+   * ```typescript
+   * const research = durableAgent.parallel({
+   *   name: "multi-research",
+   *   agents: {
+   *     web: webSearchAgent,
+   *     db: dbSearchAgent,
+   *   },
+   *   aggregate: (results) => ({
+   *     combined: results.web.output + results.db.output,
+   *   }),
+   * });
+   * ```
+   */
+  parallel<
+    TAgents extends Record<string, DefinedAgent<any>>,
+    TOutput = { [K in keyof TAgents]: string }
+  >(
+    config: ParallelAgentConfig<TAgents, TOutput>
+  ): ParallelAgent<TAgents, TOutput> {
+    const workflowName = `parallel:${config.name}`;
+
+    const workflow = this.ow.defineWorkflow(
+      {
+        name: workflowName,
+        schema: z.object({
+          task: z.string(),
+          context: z.record(z.unknown()).optional(),
+          userId: z.string().optional(),
+        }),
+      },
+      async ({ input, step }) => {
+        const agentEntries = Object.entries(config.agents) as [string, DefinedAgent<any>][];
+
+        // Run all agents in parallel as durable steps
+        const resultPromises = agentEntries.map(async ([key, agent]) => {
+          const agentName = agent.config.name;
+
+          // Hook: before agent
+          if (config.hooks?.beforeAgent) {
+            await config.hooks.beforeAgent(agentName, input);
+          }
+
+          // Run agent as a durable step
+          const result = await step.run(
+            { name: `parallel-agent:${key}` },
+            async () => {
+              const handle = await agent.run(input);
+              return handle.result();
+            }
+          );
+
+          // Hook: after agent
+          if (config.hooks?.afterAgent) {
+            await config.hooks.afterAgent(agentName, result);
+          }
+
+          return [key, result] as const;
+        });
+
+        // Wait for all agents to complete
+        const resultEntries = await Promise.all(resultPromises);
+        const results = Object.fromEntries(resultEntries) as { [K in keyof TAgents]: AgentResult };
+
+        // Build the parallel result
+        return this.buildParallelResult(config, results);
+      }
+    );
+
+    return {
+      name: config.name,
+      run: async (input: AgentInput): Promise<ParallelAgentRunHandle<TAgents, TOutput>> => {
+        const handle = await workflow.run(input);
+        return {
+          id: handle.workflowRun.id,
+          result: () => handle.result() as Promise<ParallelResult<TAgents, TOutput>>,
+          cancel: () => handle.cancel(),
+        };
+      },
+    };
+  }
+
+  /**
+   * Build the result for a parallel agent run
+   */
+  private buildParallelResult<
+    TAgents extends Record<string, DefinedAgent<any>>,
+    TOutput = { [K in keyof TAgents]: string }
+  >(
+    config: ParallelAgentConfig<TAgents, TOutput>,
+    results: { [K in keyof TAgents]: AgentResult }
+  ): ParallelResult<TAgents, TOutput> {
+    // Aggregate metadata
+    const allToolCalls = Object.values(results).flatMap((r) => [...(r as AgentResult).toolCalls]);
+    const allMessages = Object.values(results).flatMap((r) => [...(r as AgentResult).messages]);
+    const totalIterations = Object.values(results).reduce(
+      (sum, r) => sum + (r as AgentResult).iterations,
+      0
+    );
+
+    // Determine overall status
+    const statuses = Object.values(results).map((r) => (r as AgentResult).status);
+    let status: "completed" | "partial" | "failed";
+    if (statuses.every((s) => s === "completed")) {
+      status = "completed";
+    } else if (statuses.every((s) => s === "failed")) {
+      status = "failed";
+    } else {
+      status = "partial";
+    }
+
+    // Build output - use aggregator if provided, otherwise default to keyed outputs
+    let output: TOutput;
+    if (config.aggregate) {
+      output = config.aggregate(results);
+    } else {
+      // Default: extract just the output strings keyed by agent name
+      const defaultOutput = Object.fromEntries(
+        Object.entries(results).map(([key, result]) => [key, (result as AgentResult).output])
+      ) as TOutput;
+      output = defaultOutput;
+    }
+
+    return {
+      output,
+      results,
+      status,
+      iterations: totalIterations,
+      toolCalls: allToolCalls,
+      messages: allMessages,
     };
   }
 

@@ -7,6 +7,11 @@ export {
   type AgentRunHandle,
   type SequentialAgentConfig,
   type SequentialAgentHooks,
+  type ParallelAgentConfig,
+  type ParallelAgentHooks,
+  type ParallelResult,
+  type ParallelAgent,
+  type ParallelAgentRunHandle,
 } from "./durable-agent.js";
 
 // Re-export core types
