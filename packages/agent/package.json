@@ -27,7 +27,7 @@
   "dependencies": {
     "@ai-sdk/provider": "^1.0.0",
     "@durable-agent/core": "workspace:*",
-    "ai": "^4.0.0",
+    "ai": "^6.0.3",
     "openworkflow": "^0.4.1",
     "zod": "^3.24.1"
   },
@@ -40,7 +40,7 @@
   },
   "peerDependencies": {
     "@ai-sdk/provider": ">=1.0.0",
-    "ai": ">=4.0.0",
+    "ai": ">=6.0.0",
     "openworkflow": ">=0.4.0"
   },
   "peerDependenciesMeta": {

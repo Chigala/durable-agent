@@ -2,10 +2,6 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { tool } from "@durable-agent/core";
 
-// Note: Full integration tests for DurableAgent require actual OpenWorkflow
-// and AI SDK setup. These unit tests verify tool and config structure that
-// will be used with DurableAgent.
-
 describe("Tool definition for DurableAgent", () => {
   it("creates tool definitions compatible with DurableAgent", () => {
     const greetTool = tool({
@@ -133,12 +129,4 @@ describe("AgentInput structure", () => {
     expect(input.context?.previousResults).toHaveLength(2);
   });
 
-  it("supports optional userId", () => {
-    const input = {
-      task: "Personal task",
-      userId: "user-123",
-    };
-
-    expect(input.userId).toBe("user-123");
-  });
 });

@@ -20,7 +20,6 @@ export type {
   MessageHistory,
   // Agent types
   AgentStrategy,
-  MemoryConfig,
   AgentInput,
   AgentContext,
   ModelResponse,
@@ -36,6 +35,18 @@ export type {
   GenerateOptions,
   GenerateResponse,
   LanguageModelAdapter,
+  // Durable types
+  DurableAgentConfig,
+  // Composition types
+  DefinedAgent,
+  AgentRunHandle,
+  SequentialAgentConfig,
+  SequentialAgentHooks,
+  ParallelAgentConfig,
+  ParallelAgentHooks,
+  ParallelResult,
+  ParallelAgent,
+  ParallelAgentRunHandle,
 } from "./types/index.js";
 
 // Tool helpers

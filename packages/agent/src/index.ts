@@ -1,18 +1,5 @@
 // Main entry point - DurableAgent
-export {
-  DurableAgent,
-  createDurableAgent,
-  type DurableAgentConfig,
-  type DefinedAgent,
-  type AgentRunHandle,
-  type SequentialAgentConfig,
-  type SequentialAgentHooks,
-  type ParallelAgentConfig,
-  type ParallelAgentHooks,
-  type ParallelResult,
-  type ParallelAgent,
-  type ParallelAgentRunHandle,
-} from "./durable-agent.js";
+export { DurableAgent, createDurableAgent } from "./durable-agent.js";
 
 // Re-export core types
 export type {
@@ -40,6 +27,18 @@ export type {
   AgentResult,
   AgentHooks,
   AgentConfig,
+  // Durable types
+  DurableAgentConfig,
+  // Composition types
+  DefinedAgent,
+  AgentRunHandle,
+  SequentialAgentConfig,
+  SequentialAgentHooks,
+  ParallelAgentConfig,
+  ParallelAgentHooks,
+  ParallelResult,
+  ParallelAgent,
+  ParallelAgentRunHandle,
 } from "@durable-agent/core";
 
 // Re-export core utilities

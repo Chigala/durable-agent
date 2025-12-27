@@ -1,7 +1,7 @@
 import { OpenWorkflow } from "openworkflow";
 import type { Backend } from "openworkflow";
-import type { LanguageModelV1 } from "@ai-sdk/provider";
-import { generateText, type CoreMessage } from "ai";
+import { generateText } from "ai";
+import type { LanguageModel, ModelMessage } from "ai";
 import { z } from "zod";
 import type {
   AgentConfig,
@@ -10,144 +10,19 @@ import type {
   ToolRegistry,
   Message,
   AgentHooks,
-  ToolCallRecord,
+  DurableAgentConfig,
+  DefinedAgent,
+  AgentRunHandle,
+  SequentialAgentConfig,
+  ParallelAgentConfig,
+  ParallelAgent,
+  ParallelAgentRunHandle,
+  ParallelResult,
 } from "@durable-agent/core";
 import { StepManager } from "./step-manager.js";
 import { ToolExecutor } from "./tool-executor.js";
 import { getStrategy } from "./strategies/index.js";
 import type { StrategyExecutionFunctions } from "./strategies/types.js";
-
-/**
- * Configuration for DurableAgent
- */
-export interface DurableAgentConfig {
-  /** OpenWorkflow backend (SQLite or Postgres) */
-  readonly backend: Backend;
-  /** AI SDK language model */
-  readonly model: LanguageModelV1;
-  /** Worker concurrency (default: 1) */
-  readonly concurrency?: number;
-}
-
-/**
- * Handle for a defined agent
- */
-export interface DefinedAgent<TTools extends ToolRegistry = ToolRegistry> {
-  /** Agent configuration */
-  readonly config: AgentConfig<TTools>;
-  /** Run the agent with given input */
-  run(input: AgentInput): Promise<AgentRunHandle>;
-}
-
-/**
- * Handle for a running agent
- */
-export interface AgentRunHandle {
-  /** Unique identifier for this run */
-  readonly id: string;
-  /** Wait for and return the result */
-  result(): Promise<AgentResult>;
-  /** Cancel the running agent */
-  cancel(): Promise<void>;
-}
-
-/**
- * Configuration for sequential agent composition
- */
-export interface SequentialAgentConfig {
-  /** Unique name for the sequential pipeline */
-  readonly name: string;
-  /** Agents to run in sequence (accepts agents with any tool configuration) */
-  readonly agents: readonly DefinedAgent<any>[];
-  /** Optional hooks for pipeline lifecycle */
-  readonly hooks?: SequentialAgentHooks;
-}
-
-/**
- * Hooks for sequential agent lifecycle
- */
-export interface SequentialAgentHooks {
-  /** Called before each agent runs */
-  beforeAgent?: (agentName: string, input: AgentInput) => Promise<void>;
-  /** Called after each agent completes */
-  afterAgent?: (agentName: string, result: AgentResult) => Promise<void>;
-}
-
-/**
- * Configuration for parallel agent composition
- */
-export interface ParallelAgentConfig<
-  TAgents extends Record<string, DefinedAgent<any>>,
-  TOutput = { [K in keyof TAgents]: string }
-> {
-  /** Unique name for the parallel execution */
-  readonly name: string;
-  /** Agents to run in parallel, keyed by name for type-safe access */
-  readonly agents: TAgents;
-  /** Optional hooks for parallel execution lifecycle */
-  readonly hooks?: ParallelAgentHooks;
-  /** Optional aggregator to combine results into custom output */
-  readonly aggregate?: (results: { [K in keyof TAgents]: AgentResult }) => TOutput;
-}
-
-/**
- * Hooks for parallel agent lifecycle
- */
-export interface ParallelAgentHooks {
-  /** Called before each agent runs */
-  beforeAgent?: (agentName: string, input: AgentInput) => Promise<void>;
-  /** Called after each agent completes */
-  afterAgent?: (agentName: string, result: AgentResult) => Promise<void>;
-}
-
-/**
- * Result from a parallel agent execution
- */
-export interface ParallelResult<
-  TAgents extends Record<string, DefinedAgent<any>>,
-  TOutput = { [K in keyof TAgents]: string }
-> {
-  /** Aggregated or default output */
-  readonly output: TOutput;
-  /** Full results from each agent, keyed by agent name */
-  readonly results: { [K in keyof TAgents]: AgentResult };
-  /** Overall status */
-  readonly status: "completed" | "partial" | "failed";
-  /** Total iterations across all agents */
-  readonly iterations: number;
-  /** All tool calls from all agents */
-  readonly toolCalls: readonly ToolCallRecord[];
-  /** All messages from all agents */
-  readonly messages: readonly Message[];
-}
-
-/**
- * Handle for a parallel agent
- */
-export interface ParallelAgent<
-  TAgents extends Record<string, DefinedAgent<any>>,
-  TOutput = { [K in keyof TAgents]: string }
-> {
-  /** Pipeline name */
-  readonly name: string;
-  /** Run the parallel agent with given input */
-  run(input: AgentInput): Promise<ParallelAgentRunHandle<TAgents, TOutput>>;
-}
-
-/**
- * Handle for a running parallel agent
- */
-export interface ParallelAgentRunHandle<
-  TAgents extends Record<string, DefinedAgent<any>>,
-  TOutput = { [K in keyof TAgents]: string }
-> {
-  /** Unique identifier for this run */
-  readonly id: string;
-  /** Wait for and return the result */
-  result(): Promise<ParallelResult<TAgents, TOutput>>;
-  /** Cancel the running agent */
-  cancel(): Promise<void>;
-}
 
 /**
  * Main entry point for durable agents
@@ -156,7 +31,7 @@ export interface ParallelAgentRunHandle<
  */
 export class DurableAgent {
   private readonly backend: Backend;
-  private readonly model: LanguageModelV1;
+  private readonly model: LanguageModel;
   private readonly ow: OpenWorkflow;
   private readonly concurrency: number;
   private worker: ReturnType<OpenWorkflow["newWorker"]> | null = null;
@@ -174,7 +49,7 @@ export class DurableAgent {
    */
   defineAgent<TTools extends ToolRegistry>(
     config: AgentConfig<TTools>
-  ): DefinedAgent<TTools> {
+  ): DefinedAgent {
     const workflowName = `agent:${config.name}`;
 
     // Store agent config (type-erased for storage)
@@ -187,7 +62,6 @@ export class DurableAgent {
         schema: z.object({
           task: z.string(),
           context: z.record(z.unknown()).optional(),
-          userId: z.string().optional(),
         }),
       },
       async ({ input, step }) => {
@@ -244,7 +118,6 @@ export class DurableAgent {
         schema: z.object({
           task: z.string(),
           context: z.record(z.unknown()).optional(),
-          userId: z.string().optional(),
         }),
       },
       async ({ input, step }) => {
@@ -265,7 +138,6 @@ export class DurableAgent {
               const agentInput: AgentInput = {
                 task: this.buildSequentialPrompt(input.task, context),
                 context: { ...input.context, previousAgents: context },
-                userId: input.userId,
               };
 
               const handle = await agent.run(agentInput);
@@ -325,8 +197,8 @@ export class DurableAgent {
    * ```
    */
   parallel<
-    TAgents extends Record<string, DefinedAgent<any>>,
-    TOutput = { [K in keyof TAgents]: string }
+    TAgents extends Record<string, DefinedAgent>,
+    TOutput = { [K in keyof TAgents]: string },
   >(
     config: ParallelAgentConfig<TAgents, TOutput>
   ): ParallelAgent<TAgents, TOutput> {
@@ -338,11 +210,13 @@ export class DurableAgent {
         schema: z.object({
           task: z.string(),
           context: z.record(z.unknown()).optional(),
-          userId: z.string().optional(),
         }),
       },
       async ({ input, step }) => {
-        const agentEntries = Object.entries(config.agents) as [string, DefinedAgent<any>][];
+        const agentEntries = Object.entries(config.agents) as [
+          string,
+          DefinedAgent,
+        ][];
 
         // Run all agents in parallel as durable steps
         const resultPromises = agentEntries.map(async ([key, agent]) => {
@@ -372,7 +246,9 @@ export class DurableAgent {
 
         // Wait for all agents to complete
         const resultEntries = await Promise.all(resultPromises);
-        const results = Object.fromEntries(resultEntries) as { [K in keyof TAgents]: AgentResult };
+        const results = Object.fromEntries(resultEntries) as {
+          [K in keyof TAgents]: AgentResult;
+        };
 
         // Build the parallel result
         return this.buildParallelResult(config, results);
@@ -381,11 +257,14 @@ export class DurableAgent {
 
     return {
       name: config.name,
-      run: async (input: AgentInput): Promise<ParallelAgentRunHandle<TAgents, TOutput>> => {
+      run: async (
+        input: AgentInput
+      ): Promise<ParallelAgentRunHandle<TAgents, TOutput>> => {
         const handle = await workflow.run(input);
         return {
           id: handle.workflowRun.id,
-          result: () => handle.result() as Promise<ParallelResult<TAgents, TOutput>>,
+          result: () =>
+            handle.result() as Promise<ParallelResult<TAgents, TOutput>>,
           cancel: () => handle.cancel(),
         };
       },
@@ -396,22 +275,28 @@ export class DurableAgent {
    * Build the result for a parallel agent run
    */
   private buildParallelResult<
-    TAgents extends Record<string, DefinedAgent<any>>,
-    TOutput = { [K in keyof TAgents]: string }
+    TAgents extends Record<string, DefinedAgent>,
+    TOutput = { [K in keyof TAgents]: string },
   >(
     config: ParallelAgentConfig<TAgents, TOutput>,
     results: { [K in keyof TAgents]: AgentResult }
   ): ParallelResult<TAgents, TOutput> {
     // Aggregate metadata
-    const allToolCalls = Object.values(results).flatMap((r) => [...(r as AgentResult).toolCalls]);
-    const allMessages = Object.values(results).flatMap((r) => [...(r as AgentResult).messages]);
+    const allToolCalls = Object.values(results).flatMap((r) => [
+      ...(r as AgentResult).toolCalls,
+    ]);
+    const allMessages = Object.values(results).flatMap((r) => [
+      ...(r as AgentResult).messages,
+    ]);
     const totalIterations = Object.values(results).reduce(
       (sum, r) => sum + (r as AgentResult).iterations,
       0
     );
 
     // Determine overall status
-    const statuses = Object.values(results).map((r) => (r as AgentResult).status);
+    const statuses = Object.values(results).map(
+      (r) => (r as AgentResult).status
+    );
     let status: "completed" | "partial" | "failed";
     if (statuses.every((s) => s === "completed")) {
       status = "completed";
@@ -428,7 +313,10 @@ export class DurableAgent {
     } else {
       // Default: extract just the output strings keyed by agent name
       const defaultOutput = Object.fromEntries(
-        Object.entries(results).map(([key, result]) => [key, (result as AgentResult).output])
+        Object.entries(results).map(([key, result]) => [
+          key,
+          (result as AgentResult).output,
+        ])
       ) as TOutput;
       output = defaultOutput;
     }
@@ -550,11 +438,17 @@ Continue the work based on the above.`;
     const fns: StrategyExecutionFunctions = {
       generateResponse: async (ctx) => {
         return stepManager.run(`llm-${ctx.iteration}`, async () => {
+          console.log("generate Msg input", {
+            model: this.model,
+            messages: this.convertMessages(ctx.messages),
+            tools: this.convertTools(ctx.tools),
+            maxOutputTokens: config.maxTokens,
+          });
           const result = await generateText({
             model: this.model,
             messages: this.convertMessages(ctx.messages),
             tools: this.convertTools(ctx.tools),
-            maxTokens: config.maxTokens,
+            maxOutputTokens: config.maxTokens,
           });
 
           return {
@@ -562,14 +456,20 @@ Continue the work based on the above.`;
             toolCalls: result.toolCalls.map((tc) => ({
               toolCallId: tc.toolCallId,
               toolName: tc.toolName,
-              args: tc.args as Record<string, unknown>,
+              args: tc.input as Record<string, unknown>,
             })),
             finishReason: result.finishReason as
               | "stop"
               | "tool-calls"
               | "length"
               | "content-filter",
-            usage: result.usage,
+            usage: result.usage
+              ? {
+                  promptTokens: result.usage.inputTokens ?? 0,
+                  completionTokens: result.usage.outputTokens ?? 0,
+                  totalTokens: result.usage.totalTokens ?? 0,
+                }
+              : undefined,
           };
         });
       },
@@ -604,7 +504,10 @@ Continue the work based on the above.`;
 
     // Create a stub model adapter (strategies use fns.generateResponse, not model.generate)
     const modelAdapter = {
-      modelId: this.model.modelId,
+      modelId:
+        typeof this.model === "string"
+          ? this.model
+          : (this.model.modelId ?? "unknown"),
       generate: async () => {
         throw new Error("Model.generate should not be called directly");
       },
@@ -655,8 +558,8 @@ Continue the work based on the above.`;
   /**
    * Convert our message format to AI SDK format
    */
-  private convertMessages(messages: readonly Message[]): Array<CoreMessage> {
-    const result: CoreMessage[] = [];
+  private convertMessages(messages: readonly Message[]): Array<ModelMessage> {
+    const result: ModelMessage[] = [];
 
     for (const msg of messages) {
       if (msg.role === "system") {
@@ -665,14 +568,13 @@ Continue the work based on the above.`;
         result.push({ role: "user", content: msg.content });
       } else if (msg.role === "assistant") {
         if (msg.toolCalls && msg.toolCalls.length > 0) {
-          // AI SDK uses content array with tool-call parts
           const contentParts: Array<
             | { type: "text"; text: string }
             | {
                 type: "tool-call";
                 toolCallId: string;
                 toolName: string;
-                args: unknown;
+                input: unknown;
               }
           > = [];
           if (msg.content) {
@@ -683,7 +585,7 @@ Continue the work based on the above.`;
               type: "tool-call",
               toolCallId: tc.toolCallId,
               toolName: tc.toolName,
-              args: tc.args,
+              input: tc.args,
             });
           }
           result.push({
@@ -694,14 +596,13 @@ Continue the work based on the above.`;
           result.push({ role: "assistant", content: msg.content });
         }
       } else if (msg.role === "tool") {
-        // AI SDK uses content array with tool-result parts
         result.push({
           role: "tool",
           content: msg.content.map((tr) => ({
             type: "tool-result" as const,
             toolCallId: tr.toolCallId,
             toolName: tr.toolName,
-            result: tr.result,
+            output: { type: "text" as const, value: tr.result },
           })),
         });
       }
@@ -711,24 +612,24 @@ Continue the work based on the above.`;
   }
 
   /**
-   * Convert our tool format to AI SDK format
+   * Convert our tool format to AI SDK v6 format
    */
   private convertTools(tools: ToolRegistry): Record<
     string,
     {
       description: string;
-      parameters: z.ZodType;
+      inputSchema: z.ZodType;
     }
   > {
     const converted: Record<
       string,
-      { description: string; parameters: z.ZodType }
+      { description: string; inputSchema: z.ZodType }
     > = {};
 
     for (const [name, tool] of Object.entries(tools)) {
       converted[name] = {
         description: tool.description,
-        parameters: tool.parameters,
+        inputSchema: tool.parameters,
       };
     }
 

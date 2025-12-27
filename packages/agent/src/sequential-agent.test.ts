@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AgentResult, AgentInput } from "@durable-agent/core";
-import type { DefinedAgent, AgentRunHandle, SequentialAgentConfig } from "./durable-agent.js";
+import type {
+  AgentResult,
+  AgentInput,
+  DefinedAgent,
+  AgentRunHandle,
+  SequentialAgentConfig,
+} from "@durable-agent/core";
 
 /**
  * Creates a mock agent that returns a predetermined result
@@ -15,12 +20,7 @@ function createMockAgent(
     onRun?: (input: AgentInput) => void;
   } = {}
 ): DefinedAgent {
-  const {
-    status = "completed",
-    error,
-    iterations = 1,
-    onRun,
-  } = options;
+  const { status = "completed", error, iterations = 1, onRun } = options;
 
   return {
     config: { name },
@@ -59,9 +59,15 @@ function createMockOpenWorkflow() {
   const stepExecutionOrder: string[] = [];
 
   // Track defined workflows
-  const workflows = new Map<string, {
-    handler: (ctx: { input: AgentInput; step: MockStep }) => Promise<AgentResult>;
-  }>();
+  const workflows = new Map<
+    string,
+    {
+      handler: (ctx: {
+        input: AgentInput;
+        step: MockStep;
+      }) => Promise<AgentResult>;
+    }
+  >();
 
   interface MockStep {
     run: <T>(config: { name: string }, fn: () => Promise<T>) => Promise<T>;
@@ -69,7 +75,10 @@ function createMockOpenWorkflow() {
   }
 
   // Implement run function separately to preserve generic types
-  async function runStep<T>(config: { name: string }, fn: () => Promise<T>): Promise<T> {
+  async function runStep<T>(
+    config: { name: string },
+    fn: () => Promise<T>
+  ): Promise<T> {
     const stepName = config.name;
     stepExecutionOrder.push(stepName);
     executionCounts.set(stepName, (executionCounts.get(stepName) ?? 0) + 1);
@@ -91,22 +100,30 @@ function createMockOpenWorkflow() {
   };
 
   return {
-    defineWorkflow: vi.fn((config: { name: string }, handler: (ctx: { input: AgentInput; step: MockStep }) => Promise<AgentResult>) => {
-      workflows.set(config.name, { handler });
+    defineWorkflow: vi.fn(
+      (
+        config: { name: string },
+        handler: (ctx: {
+          input: AgentInput;
+          step: MockStep;
+        }) => Promise<AgentResult>
+      ) => {
+        workflows.set(config.name, { handler });
 
-      return {
-        run: async (input: AgentInput) => {
-          const workflow = workflows.get(config.name);
-          if (!workflow) throw new Error(`Workflow ${config.name} not found`);
+        return {
+          run: async (input: AgentInput) => {
+            const workflow = workflows.get(config.name);
+            if (!workflow) throw new Error(`Workflow ${config.name} not found`);
 
-          return {
-            workflowRun: { id: `workflow-${config.name}-${Date.now()}` },
-            result: () => workflow.handler({ input, step: mockStep }),
-            cancel: async () => {},
-          };
-        },
-      };
-    }),
+            return {
+              workflowRun: { id: `workflow-${config.name}-${Date.now()}` },
+              result: () => workflow.handler({ input, step: mockStep }),
+              cancel: async () => {},
+            };
+          },
+        };
+      }
+    ),
     newWorker: vi.fn(() => ({
       start: vi.fn(),
       stop: vi.fn(),
@@ -527,13 +544,23 @@ describe("sequentialAgent", () => {
  * Helper to create the sequentialAgent function with a mock OpenWorkflow
  * This simulates what DurableAgent.sequentialAgent does internally
  */
-function createSequentialAgentFunction(mockOw: ReturnType<typeof createMockOpenWorkflow>) {
+function createSequentialAgentFunction(
+  mockOw: ReturnType<typeof createMockOpenWorkflow>
+) {
   return function sequentialAgent(config: SequentialAgentConfig): DefinedAgent {
     const workflowName = `sequential:${config.name}`;
 
     const workflow = mockOw.defineWorkflow(
       { name: workflowName },
-      async ({ input, step }: { input: AgentInput; step: { run: <T>(c: { name: string }, fn: () => Promise<T>) => Promise<T> } }) => {
+      async ({
+        input,
+        step,
+      }: {
+        input: AgentInput;
+        step: {
+          run: <T>(c: { name: string }, fn: () => Promise<T>) => Promise<T>;
+        };
+      }) => {
         const context: Record<string, AgentResult> = {};
 
         for (const agent of config.agents) {
@@ -560,7 +587,6 @@ function createSequentialAgentFunction(mockOw: ReturnType<typeof createMockOpenW
               const agentInput: AgentInput = {
                 task,
                 context: { ...input.context, previousAgents: context },
-                userId: input.userId,
               };
 
               const handle = await agent.run(agentInput);
