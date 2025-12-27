@@ -8,11 +8,15 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
+    "sequential": "tsx src/sequential-durability.ts",
+    "retry": "tsx src/error-retry.ts",
+    "blog": "tsx src/blog-pipeline.ts",
+    "parallel": "tsx src/parallel-research.ts",
     "build": "tsc --build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^1.0.0",
+    "@ai-sdk/openai": "^3.0.1",
     "@durable-agent/agent": "workspace:*",
     "@durable-agent/core": "workspace:*",
     "@openworkflow/backend-postgres": "^0.4.0",
