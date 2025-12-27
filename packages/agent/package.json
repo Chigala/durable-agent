@@ -2,7 +2,26 @@
   "name": "@durable-agent/agent",
   "version": "0.0.1",
   "description": "Durable AI agent implementation",
+  "author": "Chigala",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Chigala/durable-agent.git",
+    "directory": "packages/agent"
+  },
+  "homepage": "https://github.com/Chigala/durable-agent#readme",
+  "bugs": {
+    "url": "https://github.com/Chigala/durable-agent/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "durable",
+    "workflow",
+    "llm",
+    "openai",
+    "ai-sdk"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
