@@ -3,7 +3,16 @@
   "version": "0.0.1",
   "private": true,
   "description": "Durable AI agents built on OpenWorkflow and AI SDK",
+  "author": "Chigala",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Chigala/durable-agent.git"
+  },
+  "homepage": "https://github.com/Chigala/durable-agent#readme",
+  "bugs": {
+    "url": "https://github.com/Chigala/durable-agent/issues"
+  },
   "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": ">=20.0.0"
