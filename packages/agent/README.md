@@ -1,6 +1,6 @@
-# @durable-agent/agent
+# durable-agent
 
-Build AI agents that survive crashes. Durable Agent combines [OpenWorkflow](https://github.com/openworkflow/openworkflow) for persistence with [Vercel AI SDK](https://sdk.vercel.ai/) for LLM interactions.
+Build AI agents that survive crashes. Durable Agent combines [OpenWorkflow](https://github.com/openworkflowdev/openworkflow) for persistence with [Vercel AI SDK](https://ai-sdk.dev/docs/introduction/) for LLM interactions.
 
 ## Why Durable Agent?
 
