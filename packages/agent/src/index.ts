@@ -5,6 +5,8 @@ export {
   type DurableAgentConfig,
   type DefinedAgent,
   type AgentRunHandle,
+  type SequentialAgentConfig,
+  type SequentialAgentHooks,
 } from "./durable-agent.js";
 
 // Re-export core types

@@ -76,9 +76,15 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@openworkflow/backend-postgres':
+        specifier: ^0.4.0
+        version: 0.4.0(openworkflow@0.4.1)
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

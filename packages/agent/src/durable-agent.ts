@@ -51,6 +51,28 @@ export interface AgentRunHandle {
 }
 
 /**
+ * Configuration for sequential agent composition
+ */
+export interface SequentialAgentConfig {
+  /** Unique name for the sequential pipeline */
+  readonly name: string;
+  /** Agents to run in sequence (accepts agents with any tool configuration) */
+  readonly agents: readonly DefinedAgent<any>[];
+  /** Optional hooks for pipeline lifecycle */
+  readonly hooks?: SequentialAgentHooks;
+}
+
+/**
+ * Hooks for sequential agent lifecycle
+ */
+export interface SequentialAgentHooks {
+  /** Called before each agent runs */
+  beforeAgent?: (agentName: string, input: AgentInput) => Promise<void>;
+  /** Called after each agent completes */
+  afterAgent?: (agentName: string, result: AgentResult) => Promise<void>;
+}
+
+/**
  * Main entry point for durable agents
  *
  * Abstracts away OpenWorkflow and AI SDK - users just work with agents and tools
@@ -128,6 +150,140 @@ export class DurableAgent {
       await this.worker.stop();
       this.worker = null;
     }
+  }
+
+  /**
+   * Create a sequential agent that runs multiple agents in order
+   *
+   * Each agent runs as a durable step - if the workflow crashes,
+   * completed agents are not re-run on resume.
+   */
+  sequentialAgent(config: SequentialAgentConfig): DefinedAgent {
+    const workflowName = `sequential:${config.name}`;
+
+    const workflow = this.ow.defineWorkflow(
+      {
+        name: workflowName,
+        schema: z.object({
+          task: z.string(),
+          context: z.record(z.unknown()).optional(),
+          userId: z.string().optional(),
+        }),
+      },
+      async ({ input, step }) => {
+        const context: Record<string, AgentResult> = {};
+
+        for (const agent of config.agents) {
+          const agentName = agent.config.name;
+
+          // Hook: before agent
+          if (config.hooks?.beforeAgent) {
+            await config.hooks.beforeAgent(agentName, input);
+          }
+
+          // Run agent as a durable step
+          const result = await step.run(
+            { name: `agent:${agentName}` },
+            async () => {
+              const agentInput: AgentInput = {
+                task: this.buildSequentialPrompt(input.task, context),
+                context: { ...input.context, previousAgents: context },
+                userId: input.userId,
+              };
+
+              const handle = await agent.run(agentInput);
+              return handle.result();
+            }
+          );
+
+          context[agentName] = result;
+
+          // Hook: after agent
+          if (config.hooks?.afterAgent) {
+            await config.hooks.afterAgent(agentName, result);
+          }
+
+          // Stop if agent failed
+          if (result.status === "failed") {
+            return this.buildSequentialResult(context, "failed", result.error);
+          }
+        }
+
+        // Return final result with accumulated context
+        return this.buildSequentialResult(context, "completed");
+      }
+    );
+
+    return {
+      config: { name: config.name },
+      run: async (input: AgentInput): Promise<AgentRunHandle> => {
+        const handle = await workflow.run(input);
+        return {
+          id: handle.workflowRun.id,
+          result: () => handle.result() as Promise<AgentResult>,
+          cancel: () => handle.cancel(),
+        };
+      },
+    };
+  }
+
+  /**
+   * Build prompt for sequential agent, including previous agent outputs
+   */
+  private buildSequentialPrompt(
+    originalTask: string,
+    previousResults: Record<string, AgentResult>
+  ): string {
+    const entries = Object.entries(previousResults);
+    if (entries.length === 0) {
+      return originalTask;
+    }
+
+    const previousOutputs = entries
+      .map(([name, result]) => `## ${name}\n${result.output}`)
+      .join("\n\n");
+
+    return `Original task: ${originalTask}
+
+Previous agents completed:
+${previousOutputs}
+
+Continue the work based on the above.`;
+  }
+
+  /**
+   * Build the final result for a sequential agent run
+   */
+  private buildSequentialResult(
+    context: Record<string, AgentResult>,
+    status: "completed" | "failed",
+    error?: string
+  ): AgentResult {
+    const allToolCalls = Object.values(context).flatMap((r) => [
+      ...r.toolCalls,
+    ]);
+    const allMessages = Object.values(context).flatMap((r) => [...r.messages]);
+    const totalIterations = Object.values(context).reduce(
+      (sum, r) => sum + r.iterations,
+      0
+    );
+
+    // Find the last agent that actually ran (has results in context)
+    const completedAgentNames = Object.keys(context);
+    const lastCompletedAgentName =
+      completedAgentNames[completedAgentNames.length - 1];
+    const lastResult = lastCompletedAgentName
+      ? context[lastCompletedAgentName]
+      : undefined;
+
+    return {
+      output: lastResult?.output ?? "",
+      messages: allMessages,
+      iterations: totalIterations,
+      toolCalls: allToolCalls,
+      status,
+      error,
+    };
   }
 
   /**
@@ -213,15 +369,16 @@ export class DurableAgent {
           }
         }
 
-        const results = await toolExecutor.executeAll(
-          toolCalls,
-          ctx.iteration
-        );
+        const results = await toolExecutor.executeAll(toolCalls, ctx.iteration);
 
         // Call hooks after each tool
         if (config.hooks?.afterToolCall) {
           for (const result of results) {
-            await config.hooks.afterToolCall(result.toolName, result.result, ctx);
+            await config.hooks.afterToolCall(
+              result.toolName,
+              result.result,
+              ctx
+            );
           }
         }
 
@@ -282,9 +439,7 @@ export class DurableAgent {
   /**
    * Convert our message format to AI SDK format
    */
-  private convertMessages(
-    messages: readonly Message[]
-  ): Array<CoreMessage> {
+  private convertMessages(messages: readonly Message[]): Array<CoreMessage> {
     const result: CoreMessage[] = [];
 
     for (const msg of messages) {
@@ -295,7 +450,15 @@ export class DurableAgent {
       } else if (msg.role === "assistant") {
         if (msg.toolCalls && msg.toolCalls.length > 0) {
           // AI SDK uses content array with tool-call parts
-          const contentParts: Array<{ type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; args: unknown }> = [];
+          const contentParts: Array<
+            | { type: "text"; text: string }
+            | {
+                type: "tool-call";
+                toolCallId: string;
+                toolName: string;
+                args: unknown;
+              }
+          > = [];
           if (msg.content) {
             contentParts.push({ type: "text", text: msg.content });
           }
