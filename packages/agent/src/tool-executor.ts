@@ -139,6 +139,11 @@ export class ToolExecutor<TTools extends ToolRegistry = ToolRegistry> {
         isError: false,
       };
     } catch (error) {
+      // Re-throw SleepSignal - it should propagate up to pause the workflow
+      if (error instanceof Error && error.name === "SleepSignal") {
+        throw error;
+      }
+
       const completedAt = new Date();
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -164,15 +169,51 @@ export class ToolExecutor<TTools extends ToolRegistry = ToolRegistry> {
 
   /**
    * Execute multiple tool calls in parallel
+   *
+   * Uses Promise.allSettled to ensure all non-sleeping tools complete
+   * and are cached before any SleepSignal is propagated. This prevents
+   * tools from being executed twice when a workflow resumes after sleep.
    */
   async executeAll(
     toolCalls: readonly ToolCall[],
     iteration: number,
     memory: Record<string, unknown> = {}
   ): Promise<readonly ToolResult[]> {
-    return Promise.all(
+    const settled = await Promise.allSettled(
       toolCalls.map((toolCall) => this.execute(toolCall, iteration, memory))
     );
+
+    // Separate results and errors
+    const results: ToolResult[] = [];
+    let sleepSignal: Error | null = null;
+    let otherError: Error | null = null;
+
+    for (const result of settled) {
+      if (result.status === "fulfilled") {
+        results.push(result.value);
+      } else {
+        // Check if it's a SleepSignal (from OpenWorkflow)
+        if (result.reason?.name === "SleepSignal") {
+          sleepSignal = result.reason;
+        } else {
+          // Track other errors
+          otherError = result.reason;
+        }
+      }
+    }
+
+    // If there was a sleep signal, propagate it after letting other tools complete
+    // This ensures completed tools are cached before the workflow sleeps
+    if (sleepSignal) {
+      throw sleepSignal;
+    }
+
+    // If there was another error, throw it
+    if (otherError) {
+      throw otherError;
+    }
+
+    return results;
   }
 
   /**
