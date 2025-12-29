@@ -1,6 +1,6 @@
 {
   "name": "@durable-agent/core",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Core types and interfaces for durable-agent",
   "license": "MIT",
   "type": "module",
