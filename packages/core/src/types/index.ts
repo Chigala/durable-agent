@@ -34,6 +34,7 @@ export type {
   DurableAgentConfig,
   DefinedAgent,
   AgentRunHandle,
+  AgentRunDescription,
   SequentialAgentConfig,
   SequentialAgentHooks,
   ParallelAgentConfig,

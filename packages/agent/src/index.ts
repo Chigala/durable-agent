@@ -32,6 +32,7 @@ export type {
   // Composition types
   DefinedAgent,
   AgentRunHandle,
+  AgentRunDescription,
   SequentialAgentConfig,
   SequentialAgentHooks,
   ParallelAgentConfig,

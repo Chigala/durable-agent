@@ -13,6 +13,7 @@ import type {
   DurableAgentConfig,
   DefinedAgent,
   AgentRunHandle,
+  AgentRunDescription,
   SequentialAgentConfig,
   ParallelAgentConfig,
   ParallelAgent,
@@ -73,11 +74,7 @@ export class DurableAgent {
       config,
       run: async (input: AgentInput): Promise<AgentRunHandle> => {
         const handle = await workflow.run(input);
-        return {
-          id: handle.workflowRun.id,
-          result: () => handle.result() as Promise<AgentResult>,
-          cancel: () => handle.cancel(),
-        };
+        return this.createHandle(handle.workflowRun.id);
       },
     };
   }
@@ -101,6 +98,138 @@ export class DurableAgent {
       await this.worker.stop();
       this.worker = null;
     }
+  }
+
+  /**
+   * Get a handle for an existing workflow run by ID
+   *
+   * Use this to check status or wait for results of a previously started agent run
+   *
+   * @example
+   * ```typescript
+   * // Start an agent
+   * const handle = await researcher.run({ task: "..." });
+   * const runId = handle.id;
+   *
+   * // Later, retrieve the handle
+   * const retrieved = durableAgent.getHandle(runId);
+   * const status = await retrieved.describe();
+   *
+   * if (status.state === "completed") {
+   *   console.log(status.output);
+   * }
+   * ```
+   */
+  getHandle(runId: string): AgentRunHandle {
+    return this.createHandle(runId);
+  }
+
+  /**
+   * Create a handle for a workflow run
+   */
+  private createHandle(runId: string): AgentRunHandle {
+    return {
+      id: runId,
+      describe: () => this.describeRun(runId),
+      result: () => this.waitForResult(runId),
+      cancel: () => this.cancelRun(runId),
+    };
+  }
+
+  /**
+   * Get the current state of a workflow run (non-blocking)
+   */
+  private async describeRun(runId: string): Promise<AgentRunDescription> {
+    const workflowRun = await this.backend.getWorkflowRun({
+      workflowRunId: runId,
+    });
+
+    if (!workflowRun) {
+      throw new Error(`Workflow run not found: ${runId}`);
+    }
+
+    // Map OpenWorkflow status to our status
+    let state: AgentRunDescription["state"];
+    switch (workflowRun.status) {
+      case "pending":
+        state = "pending";
+        break;
+      case "running":
+        state = "running";
+        break;
+      case "sleeping":
+        state = "sleeping";
+        break;
+      case "completed":
+      case "succeeded":
+        state = "completed";
+        break;
+      case "failed":
+      case "canceled":
+        state = "failed";
+        break;
+      default:
+        state = "pending";
+    }
+
+    // Extract error message if present
+    const errorObj = workflowRun.error as { message?: string } | null;
+    const errorMessage = errorObj?.message;
+
+    return {
+      state,
+      availableAt: workflowRun.availableAt ?? undefined,
+      startedAt: workflowRun.startedAt ?? undefined,
+      completedAt: workflowRun.finishedAt ?? undefined,
+      error: errorMessage,
+      output:
+        state === "completed"
+          ? (workflowRun.output as unknown as AgentResult | undefined)
+          : undefined,
+    };
+  }
+
+  /**
+   * Wait for a workflow run to complete and return the result (blocking)
+   */
+  private async waitForResult(runId: string): Promise<AgentResult> {
+    // Poll until the workflow completes
+    const POLL_INTERVAL_MS = 1000;
+
+    while (true) {
+      const workflowRun = await this.backend.getWorkflowRun({
+        workflowRunId: runId,
+      });
+
+      if (!workflowRun) {
+        throw new Error(`Workflow run not found: ${runId}`);
+      }
+
+      if (
+        workflowRun.status === "completed" ||
+        workflowRun.status === "succeeded"
+      ) {
+        return workflowRun.output as unknown as AgentResult;
+      }
+
+      if (
+        workflowRun.status === "failed" ||
+        workflowRun.status === "canceled"
+      ) {
+        const errorObj = workflowRun.error as { message?: string } | null;
+        throw new Error(errorObj?.message ?? `Workflow ${workflowRun.status}`);
+      }
+
+      // Still running or sleeping - wait and poll again
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+  }
+
+  /**
+   * Cancel a workflow run
+   */
+  private async cancelRun(runId: string): Promise<void> {
+    await this.backend.cancelWorkflowRun({ workflowRunId: runId });
   }
 
   /**
@@ -167,11 +296,7 @@ export class DurableAgent {
       config: { name: config.name },
       run: async (input: AgentInput): Promise<AgentRunHandle> => {
         const handle = await workflow.run(input);
-        return {
-          id: handle.workflowRun.id,
-          result: () => handle.result() as Promise<AgentResult>,
-          cancel: () => handle.cancel(),
-        };
+        return this.createHandle(handle.workflowRun.id);
       },
     };
   }
@@ -261,11 +386,13 @@ export class DurableAgent {
         input: AgentInput
       ): Promise<ParallelAgentRunHandle<TAgents, TOutput>> => {
         const handle = await workflow.run(input);
+        const runId = handle.workflowRun.id;
         return {
-          id: handle.workflowRun.id,
+          id: runId,
+          describe: () => this.describeRun(runId),
           result: () =>
             handle.result() as Promise<ParallelResult<TAgents, TOutput>>,
-          cancel: () => handle.cancel(),
+          cancel: () => this.cancelRun(runId),
         };
       },
     };
@@ -438,12 +565,6 @@ Continue the work based on the above.`;
     const fns: StrategyExecutionFunctions = {
       generateResponse: async (ctx) => {
         return stepManager.run(`llm-${ctx.iteration}`, async () => {
-          console.log("generate Msg input", {
-            model: this.model,
-            messages: this.convertMessages(ctx.messages),
-            tools: this.convertTools(ctx.tools),
-            maxOutputTokens: config.maxTokens,
-          });
           const result = await generateText({
             model: this.model,
             messages: this.convertMessages(ctx.messages),
@@ -526,6 +647,11 @@ Continue the work based on the above.`;
         fns
       );
     } catch (error) {
+      // Re-throw SleepSignal - it must propagate to OpenWorkflow to pause the workflow
+      if (error instanceof Error && error.name === "SleepSignal") {
+        throw error;
+      }
+
       // Handle errors with hook if provided
       if (config.hooks?.onError) {
         const action = await config.hooks.onError(
@@ -607,7 +733,6 @@ Continue the work based on the above.`;
         });
       }
     }
-
     return result;
   }
 
