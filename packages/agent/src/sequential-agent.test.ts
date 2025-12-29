@@ -43,6 +43,10 @@ function createMockAgent(
 
       return {
         id: `run-${name}-${Date.now()}`,
+        describe: async () => ({
+          state: status === "completed" ? "completed" : "failed" as const,
+          output: result,
+        }),
         result: async () => result,
         cancel: async () => {},
       };
@@ -314,6 +318,10 @@ describe("sequentialAgent", () => {
 
           return {
             id: "run-agent2",
+            describe: async () => ({
+              state: "completed" as const,
+              output: result,
+            }),
             result: async () => result,
             cancel: async () => {},
           };
@@ -615,6 +623,9 @@ function createSequentialAgentFunction(
         const handle = await workflow.run(input);
         return {
           id: handle.workflowRun.id,
+          describe: async () => ({
+            state: "running" as const,
+          }),
           result: () => handle.result(),
           cancel: () => handle.cancel(),
         };

@@ -185,12 +185,39 @@ export interface DefinedAgent {
 }
 
 /**
+ * Description of a running agent's current state
+ * Returned by handle.describe() for non-blocking status checks
+ */
+export interface AgentRunDescription {
+  /** Current state of the workflow */
+  readonly state: "pending" | "running" | "sleeping" | "completed" | "failed";
+  /** When a sleeping workflow will become available again */
+  readonly availableAt?: Date;
+  /** When the workflow started */
+  readonly startedAt?: Date;
+  /** When the workflow completed (if completed or failed) */
+  readonly completedAt?: Date;
+  /** Error message if state is "failed" */
+  readonly error?: string;
+  /** Result output if state is "completed" */
+  readonly output?: AgentResult;
+}
+
+/**
  * Handle for a running agent
  */
 export interface AgentRunHandle {
   /** Unique identifier for this run */
   readonly id: string;
-  /** Wait for and return the result */
+  /**
+   * Get current state without waiting (non-blocking)
+   * Use this to check status, especially for long-running workflows
+   */
+  describe(): Promise<AgentRunDescription>;
+  /**
+   * Wait for and return the result (blocking)
+   * This will not return until the workflow completes
+   */
   result(): Promise<AgentResult>;
   /** Cancel the running agent */
   cancel(): Promise<void>;
@@ -290,7 +317,12 @@ export interface ParallelAgentRunHandle<
 > {
   /** Unique identifier for this run */
   readonly id: string;
-  /** Wait for and return the result */
+  /**
+   * Get current state without waiting (non-blocking)
+   * Use this to check status, especially for long-running workflows
+   */
+  describe(): Promise<AgentRunDescription>;
+  /** Wait for and return the result (blocking) */
   result(): Promise<ParallelResult<TAgents, TOutput>>;
   /** Cancel the running agent */
   cancel(): Promise<void>;
